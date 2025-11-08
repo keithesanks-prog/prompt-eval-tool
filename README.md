@@ -116,6 +116,8 @@ The app will open in your browser at `http://localhost:8501`
 
 This tool can integrate with the SEAL API to fetch real intervention plans instead of generating them locally.
 
+**📖 For detailed integration documentation, see [SEAL_INTEGRATION.md](SEAL_INTEGRATION.md)**
+
 ### Setup
 
 1. **Start SEAL API** (in a separate terminal):
