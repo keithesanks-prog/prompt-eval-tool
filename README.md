@@ -112,6 +112,51 @@ The app will open in your browser at `http://localhost:8501`
 
 8. **Check history** by toggling "Show Evaluation History" to view all past evaluations with summary statistics
 
+## 🔗 SEAL API Integration
+
+This tool can integrate with the SEAL API to fetch real intervention plans instead of generating them locally.
+
+### Setup
+
+1. **Start SEAL API** (in a separate terminal):
+   ```bash
+   cd /path/to/seal
+   uvicorn app.main:app --reload
+   ```
+
+2. **In the Prompt-Eval-Tool UI**:
+   - Check "Use SEAL API for generation" in the sidebar
+   - Enter SEAL API URL (default: `http://localhost:8000`)
+   - The health check will run automatically and cache the result
+   - Click "🔄 Refresh" to manually re-check the health status
+
+### Health Check Caching
+
+The health check result is cached in Streamlit session state to improve performance and reliability:
+- **First check**: Health check runs when you first check the checkbox
+- **Subsequent runs**: Uses cached result (no re-checking on button clicks)
+- **Manual refresh**: Click "🔄 Refresh" button to force a new health check
+- **URL changes**: Automatically clears cache and re-checks when URL changes
+
+### Benefits
+
+- ✅ Fetch real SEAL outputs for evaluation
+- ✅ Compare SEAL vs local generation
+- ✅ Test SEAL API endpoints
+- ✅ End-to-end workflow testing
+- ✅ Automatic fallback to local generation if API is unavailable
+
+### Troubleshooting
+
+- **"SEAL API is not accessible"**: 
+  - Verify SEAL is running: `curl http://localhost:8000/health`
+  - Check the URL matches your SEAL instance
+  - Click "🔄 Refresh" to re-check the health status
+- **Health check passes but generation fails**: 
+  - Check SEAL logs for errors
+  - Verify the input data format matches SEAL's expected schema
+  - The tool will automatically fall back to local generation
+
 ## SEAL Prompt Evaluation: Single vs Batch Modes
 
 This project evaluates the two prompts from the SEAL repository across two modes:
@@ -254,12 +299,16 @@ llm-judge/
 ├── judge.py                # LLM-as-a-Judge evaluation logic
 ├── models.py               # Pydantic models for validation
 ├── logger.py               # CSV logging functionality
-├── prompts/                # Prompt generation modules
-│   ├── intervention.py    # Intervention prompt generation
-│   └── curriculum.py      # Curriculum prompt generation
-├── schemas/                # Pydantic schema definitions
-│   ├── base.py            # Intervention plan schema
-│   └── curriculum.py      # Curriculum response schema
+├── seal_client.py          # SEAL API client for fetching interventions
+├── check_deprecated.py     # Deprecation checker utility
+├── prompts/                # ⚠️ DEPRECATED - Use tilli_prompts package instead
+│   ├── DEPRECATED.md      # Migration guide
+│   ├── intervention.py    # (Old - not used)
+│   └── curriculum.py      # (Old - not used)
+├── schemas/                # ⚠️ DEPRECATED - Use tilli_prompts.schemas instead
+│   ├── DEPRECATED.md      # Migration guide
+│   ├── base.py            # (Old - not used)
+│   └── curriculum.py      # (Old - not used)
 ├── tests/                  # Test suite
 ├── requirements.txt        # Python dependencies
 ├── evaluations.csv        # Evaluation log (generated)
@@ -269,6 +318,8 @@ llm-judge/
 ├── README.md              # This file
 └── PRD.md                 # Product requirements document
 ```
+
+**⚠️ Important**: The `prompts/` and `schemas/` directories are deprecated. This project now uses the shared `tilli-prompts` package. See `SHARED_PACKAGE_INTEGRATION.md` for details.
 
 ## 🧪 Code Coverage
 

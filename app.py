@@ -20,8 +20,16 @@ from judge import (
     evaluate_batch_with_gemini,
 )
 from logger import log_evaluation, get_evaluation_history, log_batch_summary
-from prompts.intervention import InterventionPrompt
-from prompts.curriculum import CurriculumPrompt
+from tilli_prompts import InterventionPrompt, CurriculumPrompt
+from seal_client import SEALAPIClient
+from tilli_prompts.schemas import InterventionRequest, CurriculumRequest
+
+# Check for deprecated imports
+try:
+    from check_deprecated import check_deprecated_imports
+    check_deprecated_imports()
+except ImportError:
+    pass  # check_deprecated.py not required
 
 
 # Load environment variables
@@ -124,6 +132,89 @@ with st.sidebar:
 
     # Show history toggle
     show_history = st.checkbox("Show Evaluation History", value=False)
+
+    st.divider()
+
+    # SEAL API Configuration
+    st.header("🔗 SEAL API Integration")
+    seal_api_url = st.text_input(
+        "SEAL API URL",
+        value=os.getenv("SEAL_API_URL", "http://localhost:8000"),
+        help="Base URL of the SEAL API server",
+    )
+    use_seal_api = st.checkbox(
+        "Use SEAL API for generation",
+        value=False,
+        help="Fetch intervention plans from SEAL API instead of generating locally",
+    )
+    
+    # Initialize session state for health check caching
+    if "seal_health_check" not in st.session_state:
+        st.session_state.seal_health_check = {}
+    if "seal_client" not in st.session_state:
+        st.session_state.seal_client = None
+    
+    # Add refresh button for health check
+    col_refresh1, col_refresh2 = st.columns([3, 1])
+    with col_refresh2:
+        refresh_health = st.button("🔄 Refresh", help="Refresh SEAL API health check")
+    
+    seal_client = None
+    health_cache_key = f"health_{seal_api_url}"
+    
+    # Clear cache if refresh button clicked or URL changed
+    if refresh_health or (health_cache_key in st.session_state.seal_health_check and 
+                          st.session_state.seal_health_check[health_cache_key].get("url") != seal_api_url):
+        if health_cache_key in st.session_state.seal_health_check:
+            del st.session_state.seal_health_check[health_cache_key]
+        st.session_state.seal_client = None
+    
+    if use_seal_api:
+        # Check if URL changed or health check not cached
+        if health_cache_key not in st.session_state.seal_health_check:
+            # Perform health check and cache result
+            seal_client = SEALAPIClient(base_url=seal_api_url)
+            try:
+                is_healthy = seal_client.health_check()
+                st.session_state.seal_health_check[health_cache_key] = {
+                    "healthy": is_healthy,
+                    "timestamp": time.time(),
+                    "url": seal_api_url
+                }
+                if is_healthy:
+                    st.session_state.seal_client = seal_client
+                else:
+                    st.session_state.seal_client = None
+            except Exception as e:
+                st.session_state.seal_health_check[health_cache_key] = {
+                    "healthy": False,
+                    "timestamp": time.time(),
+                    "error": str(e),
+                    "url": seal_api_url
+                }
+                st.session_state.seal_client = None
+        
+        # Get cached health check result
+        health_status = st.session_state.seal_health_check.get(health_cache_key, {})
+        is_healthy = health_status.get("healthy", False)
+        
+        # Use cached client or create new one if healthy
+        if is_healthy:
+            if st.session_state.seal_client is None:
+                st.session_state.seal_client = SEALAPIClient(base_url=seal_api_url)
+            seal_client = st.session_state.seal_client
+            st.success("✅ SEAL API is accessible")
+        else:
+            error_msg = health_status.get("error", "")
+            if error_msg:
+                st.warning(f"⚠️ SEAL API is not accessible: {error_msg}")
+            else:
+                st.warning("⚠️ SEAL API is not accessible. Check the URL and ensure SEAL is running.")
+            # Don't disable use_seal_api here - let the generation code handle it
+            seal_client = None
+    else:
+        # If checkbox is unchecked, clear the cached client
+        st.session_state.seal_client = None
 
 # Main content
 individual_tab, batch_tab = st.tabs(["Individual Evaluation", "Batch Evaluation"])
@@ -229,16 +320,48 @@ with individual_tab:
                     with st.expander("📝 View Generated Prompt", expanded=True):
                         st.code(prompt, language="markdown")
 
-                # Step 2: Generate answer with LLM (Structured Output disabled)
-                with st.spinner("Generating answer..."):
-                    response_schema = None
-                    answer = generate_with_llm(
-                        prompt,
-                        generator_provider,
-                        generator_model,
-                        generator_temperature,
-                        response_schema=response_schema,
-                    )
+                # Step 2: Generate answer - either from SEAL API or local LLM
+                # Use cached client from session state if available
+                active_seal_client = seal_client or st.session_state.get("seal_client")
+                if use_seal_api and active_seal_client:
+                    with st.spinner("Fetching from SEAL API..."):
+                        try:
+                            if prompt_type == "emt":
+                                # Convert input to InterventionRequest
+                                intervention_request = InterventionRequest(**input_data)
+                                seal_response = active_seal_client.generate_intervention(intervention_request)
+                                # Convert response to JSON string for evaluation
+                                answer = json.dumps(seal_response, indent=2)
+                            elif prompt_type == "curriculum":
+                                # Convert input to CurriculumRequest
+                                curriculum_request = CurriculumRequest(**input_data)
+                                seal_response = active_seal_client.generate_curriculum(curriculum_request)
+                                # Convert response to JSON string for evaluation
+                                answer = json.dumps(seal_response, indent=2)
+                            st.success("✅ Successfully fetched from SEAL API")
+                        except Exception as e:
+                            st.error(f"❌ Failed to fetch from SEAL API: {str(e)}")
+                            st.info("Falling back to local generation...")
+                            # Fallback to local generation
+                            response_schema = None
+                            answer = generate_with_llm(
+                                prompt,
+                                generator_provider,
+                                generator_model,
+                                generator_temperature,
+                                response_schema=response_schema,
+                            )
+                else:
+                    # Local generation
+                    with st.spinner("Generating answer..."):
+                        response_schema = None
+                        answer = generate_with_llm(
+                            prompt,
+                            generator_provider,
+                            generator_model,
+                            generator_temperature,
+                            response_schema=response_schema,
+                        )
 
                 with answer_placeholder.container():
                     st.markdown(answer)
