@@ -4,6 +4,12 @@ A Streamlit web app for generating educational intervention and curriculum promp
 
 **🌐 Live Demo:** [https://llm-judge-tilli.streamlit.app/](https://llm-judge-tilli.streamlit.app/)
 
+## 📸 Screenshot
+
+![Streamlit Web App Screenshot](screenshot.png)
+
+*The LLM Evaluation Playground interface showing the evaluation workflow*
+
 ## 🎯 Features
 
 - **Intervention Prompt Generation** – Generate targeted intervention plans based on EMT (Emotion Matching Task) scores
@@ -16,6 +22,47 @@ A Streamlit web app for generating educational intervention and curriculum promp
 - **Evaluation History** – View past evaluations with summary statistics
 - **Batch Evaluation** – Process multiple evaluations from a CSV file
 - **Multiple Models** – Support for Gemini 2.5 models (Pro, Flash, Flash-Lite)
+- **Judge Score Validation** – Dedicated tab + tooling to detect score saturation (see `JUDGE_VALIDATION_README.md`)
+
+## 🏛 Architecture Overview
+
+```mermaid
+flowchart LR
+    subgraph SharedPackage[Shared Package]
+        SL[Shared Logging]
+        SS[Shared Schemas]
+        SP[Shared Prompts]
+        SC[Shared Config]
+    end
+
+    subgraph PromptEval[Prompt Evaluation]
+        SA[Streamlit Application]
+        JL[Judge & Logging]
+    end
+
+    subgraph SEAL[SEAL]
+        SMA[SEAL Main Application]
+        LLMG[LLM Gateway]
+        CG[Curriculum Gateway]
+        API[FastAPI Endpoints]
+    end
+
+    SharedPackage --> SA
+    SharedPackage --> JL
+    SharedPackage --> SMA
+    SharedPackage --> LLMG
+    SharedPackage --> CG
+
+    SA --> JL
+    JL -->|Future integration| SMA
+    SMA --> API
+    LLMG --> API
+    CG --> API
+```
+
+- The **shared package** (this repo’s `tilli-prompts`) provides prompts, schemas, logging, and config consumed by both the Streamlit evaluator and SEAL services.
+- The **Streamlit app** fetches/pastes generations, runs the judge, and logs results.
+- The **SEAL stack** exposes FastAPI endpoints (main app + gateways) that can feed generations back into the evaluator today and, in the future, receive fully automated feedback.
 
 ## 🚀 Setup
 
@@ -82,10 +129,13 @@ The app will open in your browser at `http://localhost:8501`
    - Select a **Judge Model** for evaluation (with temperature control)
    - Select a **Generator Model** for answer generation (with temperature control)
    - **Note:** If you check the "Use Structured Output (Gemini)" checkbox, a warning will appear reminding you to keep it unticked and use Pydantic validation instead
+   - Choose a **Prompt Detail Level** (Detailed, Focused, Minimal) to experiment with different instruction densities for the generator
 
 3. **Select prompt type**:
    - **EMT (Emotion Matching Task)**: Generate intervention plans based on class performance scores
    - **Curriculum**: Generate curriculum-based interventions based on grade level and skill areas
+
+> If the EMT input doesn’t specify `deficient_area`, the app automatically picks the lowest-performing EMT dimension based on the averages you provide.
 
 4. **Enter JSON input data**:
    - **For EMT**: Provide scores and metadata (see example format below)
@@ -111,6 +161,14 @@ The app will open in your browser at `http://localhost:8501`
    - Expandable section to view the exact judge prompt used
 
 8. **Check history** by toggling "Show Evaluation History" to view all past evaluations with summary statistics
+
+### Judge Validation Tab
+
+- Switch to the **Judge Validation** tab to analyze whether the judge is using the full 1–10 scale.
+- Click **“Analyze Score Distribution”** to view saturation warnings, variance metrics, and histograms (falls back to Streamlit charts if matplotlib is missing).
+- Upload the sample `test-judge-validation.csv` (or your own file with an `expected_quality` column) to confirm the judge gives higher scores to higher-quality answers.
+- The judge scoring prompt now **starts every score at 5**, deducts points for each flaw, and only allows increases above 7 when the judge cites explicit, context-specific evidence of excellence. This keeps most answers in the 5–7 band unless they are truly exceptional.
+- For in-depth workflows, CLI commands, and troubleshooting tips, see [`JUDGE_VALIDATION_README.md`](JUDGE_VALIDATION_README.md).
 
 ## 🔗 SEAL API Integration
 
@@ -216,6 +274,32 @@ If you check the structured output checkbox in the UI, a warning message will ap
 4. **Click "Run Batch Evaluation"** to process all rows
 
 5. **Download results** as CSV with all evaluation metrics
+
+6. **Review batch-level metrics**: After the per-item loop finishes, the app automatically feeds the full set of input→answer pairs into the batch judge prompt (see `_build_batch_prompt()` in `judge.py`). The resulting **Consistency** and **Creativity** scores summarize diversity/coherence across the entire batch, appear above the results table, and are logged to `evaluations.csv` as rows where `row_type == "batch_summary"`.
+
+> Want to emphasize different batch criteria (e.g., heavier weight on creativity/diversity)? Edit the instructions inside `_build_batch_prompt()`—that’s the single place where the aggregate Consistency/Creativity guidance lives.
+
+Example tweak:
+
+```python
+# judge.py
+def _build_batch_prompt(pairs):
+    header = (
+        "You are an expert evaluator. Evaluate ONLY diversity of ideas across the entire batch.\n"
+        "Creativity focus: novel activity types, varied tone, different implementation angles.\n"
+        "Penalize repetitive structure or wording.\n\n"
+    )
+    # ... existing pair formatting ...
+    footer = (
+        "Output format:\n"
+        "Batch Evaluation\n"
+        "Creativity: <brief rationale mentioning diversity>\n"
+        "Creativity Score: <integer 1-10>\n"
+    )
+    return header + body + footer
+```
+
+Restart the app after changing the prompt; batch runs will now reflect the new guidance.
 
 ### Example Input Formats
 
